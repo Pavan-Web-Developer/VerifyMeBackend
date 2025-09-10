@@ -1,0 +1,190 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+// --- USER & AUTH ---
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  phone         String?  @unique
+  passwordHash  String
+  role          Role     @default(CANDIDATE)
+  isVerified    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  profile       Profile?
+  otpCodes      OTPCode[]
+  jobPostings   JobPosting[] @relation("EmployerJobs")
+  applications  Application[] @relation("CandidateApplications")
+}
+
+model OTPCode {
+  id        String   @id @default(uuid())
+  code      String
+  type      OTPType
+  expiresAt DateTime
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+}
+
+enum Role {
+  CANDIDATE
+  EMPLOYER
+  ADMIN
+}
+
+enum OTPType {
+  LOGIN
+  MFA
+  PASSWORD_RESET
+}
+
+// --- PROFILE ---
+model Profile {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  firstName     String
+  lastName      String
+  dob           DateTime
+  headline      String?
+  location      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user            User       @relation(fields: [userId], references: [id])
+  education       Education[]
+  employment      Employment[]
+  certifications  Certification[]
+  verifications   Verification[]
+}
+
+
+model Education {
+  id          String   @id @default(uuid())
+  profileId   String
+  institution String
+  degree      String
+  year        Int
+  createdAt   DateTime @default(now())
+
+  profile     Profile  @relation(fields: [profileId], references: [id])
+}
+
+model Employment {
+  id          String   @id @default(uuid())
+  profileId   String
+  company     String
+  jobTitle    String
+  startDate   DateTime
+  endDate     DateTime?
+  responsibilities String?
+  createdAt   DateTime @default(now())
+
+  profile     Profile   @relation(fields: [profileId], references: [id])
+  references  Reference[]
+}
+
+model Certification {
+  id          String   @id @default(uuid())
+  profileId   String
+  name        String
+  issuer      String
+  issuedAt    DateTime
+  expiryDate  DateTime?
+  licenseId   String?
+  createdAt   DateTime @default(now())
+
+  profile     Profile @relation(fields: [profileId], references: [id])
+}
+
+model Reference {
+  id          String   @id @default(uuid())
+  employmentId String
+  name        String
+  email       String
+  relation    String?
+  status      String   @default("PENDING") // Pending, Completed
+  createdAt   DateTime @default(now())
+
+  employment  Employment @relation(fields: [employmentId], references: [id])
+}
+
+// --- JOBS ---
+model JobPosting {
+  id            String   @id @default(uuid())
+  employerId    String
+  title         String
+  department    String?
+  location      String
+  type          JobType
+  openings      Int
+  description   String
+  requirements  Json
+  status        String   @default("OPEN") // OPEN, CLOSED
+  createdAt     DateTime @default(now())
+
+  employer      User     @relation("EmployerJobs", fields: [employerId], references: [id])
+  applications  Application[]
+}
+
+enum JobType {
+  FULL_TIME
+  PART_TIME
+  INTERNSHIP
+  CONTRACT
+}
+
+// --- APPLICATIONS ---
+model Application {
+  id           String   @id @default(uuid())
+  jobId        String
+  candidateId  String
+  resumeUrl    String?
+  coverLetter  String?
+  status       AppStatus @default(APPLIED)
+  createdAt    DateTime  @default(now())
+
+  job          JobPosting @relation(fields: [jobId], references: [id])
+  candidate    User       @relation("CandidateApplications", fields: [candidateId], references: [id])
+}
+
+enum AppStatus {
+  APPLIED
+  UNDER_REVIEW
+  SHORTLISTED
+  REJECTED
+  ACCEPTED
+  CLOSED
+}
+
+// --- VERIFICATION ---
+model Verification {
+  id          String   @id @default(uuid())
+  profileId   String
+  type        VerificationType
+  status      VerificationStatus @default(PENDING)
+  comments    String?
+  createdAt   DateTime @default(now())
+
+  profile     Profile @relation(fields: [profileId], references: [id])
+}
+
+enum VerificationType {
+  EDUCATION
+  EMPLOYMENT
+  CERTIFICATION
+  BACKGROUND
+}
+
+enum VerificationStatus {
+  PENDING
+  IN_PROGRESS
+  VALIDATED
+  REJECTED
+}
