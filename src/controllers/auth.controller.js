@@ -2,6 +2,8 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import { addToBlacklist } from "../utils/tokenBlacklist.js";
+import { sendEmail } from "../utils/mailer.js";
+import { generateOTP, saveOTP, verifyOTP } from "../utils/otp.js";
 
 const prisma = new PrismaClient();
 
@@ -108,3 +110,96 @@ export const logout = async (req, res) => {
     }
 };
 
+
+
+// FORGOT PASSWORD
+export const forgotPassword = async (req, res) => {
+    try {
+        const { email, phone } = req.body;
+
+        // find user
+        const user = await prisma.user.findFirst({
+            where: {
+                OR: [{ email }, { phone }]
+            }
+        });
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        // generate and save OTP
+        const code = generateOTP();
+        const identifier = email || phone;
+        saveOTP(identifier, code);
+
+        // send OTP (only email for now)
+        if (email) {
+            await sendEmail(email, "Password Reset OTP", `Your OTP code is: ${code} will expire in 5 min`);
+        } else {
+            console.log(`SMS OTP for ${phone}: ${code}`); // hook with Twilio later
+        }
+
+        res.json({ message: "OTP sent successfully will expire in 5 min" });
+    } catch (error) {
+        console.error("FORGOT PASSWORD ERROR:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+// RESET PASSWORD
+export const resetPassword = async (req, res) => {
+    try {
+        const { email, phone, otp, newPassword } = req.body;
+
+        const identifier = email || phone;
+
+        // validate OTP
+        const isValid = verifyOTP(identifier, otp);
+        if (!isValid) return res.status(400).json({ message: "Invalid or expired OTP" });
+
+        // find user
+        const user = await prisma.user.findFirst({
+            where: { OR: [{ email }, { phone }] }
+        });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        // hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        // update password
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { passwordHash: hashedPassword }
+        });
+
+        res.json({ message: "Password reset successful" });
+    } catch (error) {
+        console.error("RESET PASSWORD ERROR:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+export const changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        const userId = req.user.id; // from JWT middleware
+
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!isValid) return res.status(400).json({ message: "Current password is incorrect" });
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        await prisma.user.update({
+            where: { id: userId },
+            data: { passwordHash: hashedPassword }
+        });
+
+        res.json({ message: "Password changed successfully" });
+    } catch (error) {
+        console.error("CHANGE PASSWORD ERROR:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+};
