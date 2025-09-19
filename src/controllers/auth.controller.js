@@ -125,24 +125,34 @@ export const login = async (req, res) => {
             data: { failedLoginAttempts: 0, lockUntil: null }
         });
 
+        // After successful password check and resetting failed attempts
+        if (user.mfaEnabled) {
+            const identifier = user.mfaType === "phone" ? user.phone : user.email;
+            const code = generateOTP();
+            saveOTP(identifier, code);
+
+            if (user.mfaType === "email") {
+                await sendEmail(user.email, "Login MFA OTP", `Your OTP for login is: ${code}`);
+            } else {
+                console.log(`MFA OTP for ${user.phone}: ${code}`);
+            }
+
+            return res.json({ message: "MFA OTP sent. Please verify to complete login." });
+        }
+
+        // If MFA not enabled, issue token immediately
         const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "1h" });
         res.json({
             token,
-            user: {
-                id: user.id,
-                email: user.email,
-                phone: user.phone,
-                role: user.role,
-                isVerified: user.isVerified,
-            },
+            user: { id: user.id, email: user.email, phone: user.phone, role: user.role, isVerified: user.isVerified }
         });
+
     } catch (error) {
         console.error("LOGIN ERROR:", error);
         res.status(500).json({ message: "Server error" });
     }
 };
 
-// =================== VERIFY ACCOUNT ===================
 // =================== VERIFY ACCOUNT ===================
 export const verifyAccount = async (req, res) => {
     try {
@@ -356,3 +366,39 @@ export const resendVerification = async (req, res) => {
         res.status(500).json({ message: "Server error" });
     }
 };
+
+// POST /verify-mfa
+export const verifyMFA = async (req, res) => {
+    const { email, phone, otp } = req.body;
+    const identifier = email || phone;
+
+    const user = await prisma.user.findFirst({ where: { OR: [{ email }, { phone }] } });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (!user.mfaEnabled) {
+        return res.status(400).json({ message: "MFA is not enabled for this user" });
+    }
+
+    const isValid = verifyOTP(identifier, otp);
+    if (!isValid) return res.status(400).json({ message: "Invalid or expired OTP" });
+
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "1h" });
+
+    res.json({ token, user: { id: user.id, email: user.email, phone: user.phone } });
+};
+export const updateMFA = async (req, res) => {
+    const userId = req.user.userId;
+    const { mfaEnabled, mfaType } = req.body; // mfaType = "email" or "phone"
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    await prisma.user.update({
+        where: { id: userId },
+        data: { mfaEnabled, mfaType }
+    });
+
+    res.json({ message: `MFA ${mfaEnabled ? "enabled" : "disabled"} successfully` });
+};
+
+
